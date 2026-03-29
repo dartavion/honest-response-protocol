@@ -16,12 +16,12 @@ Standard prompting gives a model permission to say "I don't know" — but doesn'
 
 ## How It Works
 
-The server exposes four tools. The model can call them voluntarily; schema validation catches non-conforming responses as a fallback.
+The server exposes five tools. The model can call them voluntarily; schema validation catches non-conforming responses as a fallback.
 
 ### Tools
 
 #### `hrp_respond`
-The primary tool. Wraps a query in the full Honest Response Protocol.
+The primary tool. Returns a structured prompt that instructs the model to respond under the full Honest Response Protocol. The model's reply should then be validated with `hrp_check`.
 
 Input:
 ```json
@@ -32,7 +32,7 @@ Input:
 }
 ```
 
-Output (schema-validated):
+The expected response shape (validated by `hrp_check`):
 ```json
 {
   "evidence": ["string"],
@@ -141,6 +141,38 @@ Returns `BLOCKED` with a structured prompt if the model cannot produce evidence.
 
 ---
 
+#### `hrp_session`
+Returns session-level audit data across all turns. Use to inspect accumulated violations and session health, not just individual responses.
+
+Input:
+```json
+{
+  "action": "summary | history | reset"
+}
+```
+
+`summary` (default) returns:
+```json
+{
+  "session_id": "string",
+  "started": "ISO timestamp",
+  "turns": "number",
+  "total_violations": "number",
+  "violation_breakdown": { "NO_EVIDENCE": "number", "...": "number" },
+  "blank_rate": "number",
+  "confidence_totals": { "HIGH": "number", "INFERRED": "number", "..." : "number" },
+  "health": "CLEAN | DEGRADED | COMPROMISED",
+  "health_reason": "string | null"
+}
+```
+
+`history` returns the full array of `TurnRecord` objects.
+`reset` clears the session log and returns `{ reset: true, session_id: "string" }`.
+
+Health thresholds: `COMPROMISED` if ≥ 3 ERROR-level violations; `DEGRADED` if average violations per turn exceeds 1.5; `CLEAN` otherwise.
+
+---
+
 ## Enforcement Model
 
 ```
@@ -225,11 +257,11 @@ Use hrp_check to validate the last response.
 
 ## Roadmap
 
-- [ ] Core tool implementations (`hrp_respond`, `hrp_check`, `hrp_adversarial`, `hrp_evidence`)
-- [ ] Schema validation layer
-- [ ] Confidence distribution reporting
+- [x] Core tool implementations (`hrp_respond`, `hrp_check`, `hrp_adversarial`, `hrp_evidence`, `hrp_session`)
+- [x] Schema validation layer
+- [x] Confidence distribution reporting
+- [x] Session persistence (JSONL append, replay on construction, reset)
 - [ ] Domain-specific tag extensions (legal, medical, engineering)
-- [ ] Session persistence (reasoning log across turns)
 - [ ] ACF integration — full framework as optional deep mode
 
 ---
@@ -244,20 +276,14 @@ MIT
 
 This is `v0.1.0-alpha`. The protocol is structurally sound; the implementation has honest gaps.
 
-**Session state is in-memory only.**
-The `hrp_session` logger resets on server restart. Reasoning chains are not persisted across sessions. If you restart Claude Code or VS Code, the violation history is gone. Session persistence is on the roadmap.
-
 **`hrp_check` plain-text scanning is heuristic.**
 When auditing a response that isn't structured JSON, `validatePlainText()` uses pattern matching — looking for confidence tag patterns, countercheck keywords, and source attribution markers. It will miss violations in creatively phrased responses and may flag false positives. The structured JSON path (`validateHrpResponse()`) is deterministic; the plain-text path is not.
-
-**No npm package yet.**
-Install from source. `npm publish` is pending test coverage.
 
 **The model can still satisfy the schema rhetorically.**
 Schema validation catches structural violations — missing fields, wrong types, empty evidence arrays. It does not catch a model that populates all fields with plausible-sounding but fabricated content. The adversarial self-check is the human's last line of defense, not the server's.
 
 **`hrp_respond` returns a prompt, not a validated response.**
-The tool gives the model a structured prompt to respond to. It does not intercept or validate the model's actual output — that requires a follow-up `hrp_check` call. A future version will close this loop automatically.
+The tool gives the model a structured prompt to respond to. It does not intercept or validate the model's actual output — that requires a follow-up `hrp_check` call.
 
 ---
 ## Related

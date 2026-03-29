@@ -1,3 +1,4 @@
+import { readFileSync, appendFileSync, writeFileSync } from "fs";
 import type { ValidationResult, ViolationType } from "./validator.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -29,10 +30,33 @@ export class SessionLogger {
   private sessionId: string;
   private started: string;
   private turns: TurnRecord[] = [];
+  private persistPath: string | null;
 
-  constructor(sessionId?: string) {
+  constructor(sessionId?: string, persistPath?: string) {
     this.sessionId = sessionId ?? `hrp-${Date.now()}`;
     this.started = new Date().toISOString();
+    this.persistPath = persistPath ?? null;
+    if (this.persistPath) this.replay();
+  }
+
+  private replay(): void {
+    try {
+      const lines = readFileSync(this.persistPath!, "utf-8")
+        .split("\n")
+        .filter((l) => l.trim());
+      for (const line of lines) {
+        try {
+          this.turns.push(JSON.parse(line) as TurnRecord);
+        } catch {
+          // skip malformed lines
+        }
+      }
+      if (this.turns.length > 0) {
+        this.started = this.turns[0].timestamp;
+      }
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
   }
 
   // ─── Record a turn ──────────────────────────────────────────────────────────
@@ -47,6 +71,9 @@ export class SessionLogger {
       blank,
     };
     this.turns.push(record);
+    if (this.persistPath) {
+      appendFileSync(this.persistPath, JSON.stringify(record) + "\n", "utf-8");
+    }
     return record;
   }
 
@@ -158,6 +185,9 @@ export class SessionLogger {
   reset(): void {
     this.turns = [];
     this.started = new Date().toISOString();
+    if (this.persistPath) {
+      writeFileSync(this.persistPath, "", "utf-8");
+    }
   }
 
   getId(): string {

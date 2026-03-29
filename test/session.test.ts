@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { SessionLogger } from "../src/session.js";
 import type { ValidationResult } from "../src/validator.js";
 
@@ -307,5 +310,108 @@ describe("SessionLogger", () => {
     logger.reset();
     const after = logger.summary().started;
     expect(after).not.toBe(before);
+  });
+});
+
+// ─── SessionLogger persistence ────────────────────────────────────────────────
+
+describe("SessionLogger persistence", () => {
+  let tmpPath: string;
+
+  beforeEach(() => {
+    tmpPath = join(tmpdir(), `hrp-test-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
+  });
+
+  afterEach(() => {
+    if (existsSync(tmpPath)) unlinkSync(tmpPath);
+  });
+
+  it("creates the JSONL file on first record()", () => {
+    const logger = new SessionLogger("s1", tmpPath);
+    logger.record("hrp_respond", "Q", null);
+    expect(existsSync(tmpPath)).toBe(true);
+  });
+
+  it("appends one JSON line per record()", () => {
+    const logger = new SessionLogger("s1", tmpPath);
+    logger.record("hrp_respond", "Q1", null);
+    logger.record("hrp_check", "Q2", null);
+    const lines = readFileSync(tmpPath, "utf-8").trim().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0]).tool).toBe("hrp_respond");
+    expect(JSON.parse(lines[1]).tool).toBe("hrp_check");
+  });
+
+  it("replays existing JSONL on construction", () => {
+    const a = new SessionLogger("s1", tmpPath);
+    a.record("hrp_respond", "Q1", null);
+    a.record("hrp_check", "Q2", null);
+
+    const b = new SessionLogger("s1", tmpPath);
+    expect(b.history()).toHaveLength(2);
+    expect(b.last()!.tool).toBe("hrp_check");
+  });
+
+  it("continues turn numbering correctly after replay", () => {
+    const a = new SessionLogger("s1", tmpPath);
+    a.record("hrp_respond", "Q1", null);
+
+    const b = new SessionLogger("s1", tmpPath);
+    const r = b.record("hrp_adversarial", "Q2", null);
+    expect(r.turn).toBe(2);
+  });
+
+  it("restores started from first replayed turn's timestamp", () => {
+    const a = new SessionLogger("s1", tmpPath);
+    a.record("hrp_respond", "Q", null);
+    const firstTimestamp = a.history()[0].timestamp;
+
+    const b = new SessionLogger("s1", tmpPath);
+    expect(b.summary().started).toBe(firstTimestamp);
+  });
+
+  it("reset() truncates the JSONL file", () => {
+    const logger = new SessionLogger("s1", tmpPath);
+    logger.record("hrp_respond", "Q", null);
+    logger.reset();
+    expect(readFileSync(tmpPath, "utf-8")).toBe("");
+  });
+
+  it("after reset(), new records start fresh in the file", () => {
+    const logger = new SessionLogger("s1", tmpPath);
+    logger.record("hrp_respond", "Q1", null);
+    logger.reset();
+    logger.record("hrp_check", "Q2", null);
+    const lines = readFileSync(tmpPath, "utf-8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]).tool).toBe("hrp_check");
+  });
+
+  it("does not throw when persistPath file does not exist yet", () => {
+    expect(() => new SessionLogger("s1", tmpPath)).not.toThrow();
+  });
+
+  it("skips malformed lines during replay", () => {
+    writeFileSync(tmpPath, '{"turn":1,"timestamp":"t","tool":"hrp_respond","query":"Q","validation":null,"blank":false}\nbad json\n{"turn":2,"timestamp":"t","tool":"hrp_check","query":"Q2","validation":null,"blank":false}\n', "utf-8");
+    const logger = new SessionLogger("s1", tmpPath);
+    expect(logger.history()).toHaveLength(2);
+  });
+
+  it("in-memory behavior is unchanged when no persistPath given", () => {
+    const logger = new SessionLogger("s1");
+    logger.record("hrp_respond", "Q", null);
+    expect(existsSync(tmpPath)).toBe(false);
+    expect(logger.history()).toHaveLength(1);
+  });
+
+  it("persists full ValidationResult including violations", () => {
+    const validation = makeValidation(1, 1);
+    const a = new SessionLogger("s1", tmpPath);
+    a.record("hrp_respond", "Q", validation);
+
+    const b = new SessionLogger("s1", tmpPath);
+    const replayed = b.history()[0].validation!;
+    expect(replayed.violations).toHaveLength(2);
+    expect(replayed.valid).toBe(false);
   });
 });

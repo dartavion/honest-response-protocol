@@ -274,7 +274,7 @@ MIT
 
 ## Known Limitations
 
-This is `v0.1.0-alpha`. The protocol is structurally sound; the implementation has honest gaps.
+This is `v0.2.0-alpha`. The protocol is structurally sound; the implementation has honest gaps.
 
 **`hrp_check` plain-text scanning is heuristic.**
 When auditing a response that isn't structured JSON, `validatePlainText()` uses pattern matching — looking for confidence tag patterns, countercheck keywords, and source attribution markers. It will miss violations in creatively phrased responses and may flag false positives. The structured JSON path (`validateHrpResponse()`) is deterministic; the plain-text path is not.

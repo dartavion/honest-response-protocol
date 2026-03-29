@@ -240,10 +240,6 @@ MIT
 
 ---
 
-# README Addition — paste this before the "Related" section
-
----
-
 ## Known Limitations
 
 This is `v0.1.0-alpha`. The protocol is structurally sound; the implementation has honest gaps.

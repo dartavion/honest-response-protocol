@@ -1,6 +1,7 @@
 {
   "name": "hrp-mcp",
-  "version": "0.1.0",
+  "version": "0.2.0-alpha",
+  "private": true,
   "description": "Honest Response Protocol - MCP server for epistemic discipline in LLM responses",
   "type": "module",
   "main": "build/index.js",
@@ -12,17 +13,27 @@
     "dev": "ts-node src/index.ts",
     "start": "node build/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "pnpm test && pnpm build"
   },
   "keywords": [
     "mcp",
     "llm",
     "honesty",
     "epistemics",
+    "honesty-gap",
+    "observer-architecture",
     "ai-safety",
     "claude",
-    "adversarial-clarity"
+    "nova"
   ],
+  "files": [
+    "build"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dartavion/honest-response-protocol.git"
+  },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

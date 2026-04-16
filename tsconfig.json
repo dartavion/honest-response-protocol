@@ -6,7 +6,7 @@
     "strict": true,
     "skipLibCheck": true,
     "outDir": "build",
-    "rootDir": "."
+    "rootDir": "src"
   },
-  "include": ["src", "test"]
+  "include": ["src"]
 }

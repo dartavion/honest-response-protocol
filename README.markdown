@@ -2,15 +2,40 @@
 
 **Honest Response Protocol — MCP Server**
 
-An MCP server for Claude Code and VS Code that enforces epistemic discipline in LLM responses. Closes the AI honesty gap by providing structured tools for confidence tagging, evidence-first reasoning, source attribution, and adversarial self-checking.
+An MCP server for Claude Code and VS Code that implements the [Nova observer architecture](https://github.com/dartavion/nova) for LLM responses. Provides structural tools for closing the honesty gap: evidence-first reasoning, domain-calibrated confidence tagging, source attribution, and adversarial self-checking.
 
-> Built on the [Adversarial Clarity Framework](https://github.com/dartavion/nova).
+> Built on [Nova — Observer Architecture for Honest AI](https://github.com/dartavion/nova).
 
 ---
 
 ## The Problem
 
-Standard prompting gives a model permission to say "I don't know" — but doesn't fix miscalibrated confidence. A model can be wrong *and* certain. Existing MCP reasoning servers (sequential-thinking, thinking-patterns) provide process structure without honesty enforcement. This server provides both.
+A model can be wrong and certain at the same time.
+
+Standard prompting gives a model permission to say "I don't know" — but it doesn't fix miscalibrated confidence. A model without an observer layer becomes its output: swept into the momentum of fluent generation, with no mechanism to ask *do I actually know this, or am I performing knowing?*
+
+This is the **honesty gap** — the distance between what a model actually knows and what it presents. Existing MCP reasoning servers provide process structure without honesty enforcement. HRP provides the observer layer that makes the gap visible.
+
+What counts as sufficient evidence varies by domain. A peer-reviewed study is the floor for medical claims; a binding statute is the floor for legal ones; a spec or measured result is the floor for engineering. Generic confidence enforcement treats all domains the same — too loose for high-stakes fields, too strict for informal ones. HRP calibrates to the domain.
+
+---
+
+## Domain Registry
+
+The `domain` parameter is accepted by `hrp_respond`, `hrp_check`, and `hrp_adversarial`. When provided, it calibrates evidence standards, source expectations, the HIGH confidence threshold, domain-specific caution notes, and adversarial falsification framing.
+
+| Domain | Evidence floor | HIGH requires |
+|--------|---------------|---------------|
+| `medical` | Peer-reviewed studies, clinical guidelines (NICE, WHO, CDC), FDA approvals | Published, peer-reviewed study or established guideline |
+| `legal` | Statutes, binding case law, regulations in the stated jurisdiction | Binding authority in jurisdiction; persuasive authority is INFERRED |
+| `engineering` | Published specs, standards (ISO, ANSI, IEEE, ASTM), empirical test data | Specification, standard, or empirically measured result |
+| `scientific` | Peer-reviewed, replicated research; preprints are INFERRED | Replicated finding or scientific consensus |
+| `financial` | Audited filings (SEC/EDGAR), official market data, peer-reviewed economic research | Verifiable historical data from official filings or data sources |
+| `historical` | Primary sources, scholarly secondary sources, historiographical consensus | Primary source documentation or strong scholarly consensus |
+| `civic` | Official government records, peer-reviewed political science, electoral/census data | Official primary source or peer-reviewed research; normative claims are never HIGH |
+| `general` | Credible primary or secondary sources | Well-established, directly verifiable claim with a nameable source |
+
+Any unrecognized domain string falls back to `general` standards.
 
 ---
 
@@ -27,7 +52,7 @@ Input:
 ```json
 {
   "query": "string",
-  "domain": "string (optional — e.g. 'legal', 'medical', 'engineering')",
+  "domain": "string (optional — medical | legal | engineering | scientific | financial | historical | civic | general)",
   "depth": "standard | deep"
 }
 ```
@@ -60,12 +85,13 @@ If `blank: true`, all other fields except `blank_reason` are null. No inference 
 ---
 
 #### `hrp_check`
-Validates an existing response against the protocol. Use as a fallback auditor when the model responds without calling `hrp_respond`.
+Validates an existing response against the protocol. Applies domain-calibrated evidence standards when `domain` is provided. Use as a fallback auditor when the model responds without calling `hrp_respond`.
 
 Input:
 ```json
 {
-  "response_text": "string"
+  "response_text": "string",
+  "domain": "string (optional — same domain used when the response was generated)"
 }
 ```
 
@@ -93,13 +119,14 @@ Output:
 ---
 
 #### `hrp_adversarial`
-Runs the adversarial self-check (reversal test) on a given claim or response in isolation.
+Runs a domain-calibrated adversarial reversal test on a given claim. Falsification framing adapts to the domain — engineering challenges target failure modes and tolerances; legal challenges target jurisdiction and conflicting authority; medical challenges target population variance and study design.
 
 Input:
 ```json
 {
   "claim": "string",
-  "depth": "single | double"
+  "depth": "single | double",
+  "domain": "string (optional)"
 }
 ```
 
@@ -248,9 +275,10 @@ Use hrp_check to validate the last response.
 
 ## Design Principles
 
-- **Blank is not failure.** A `[BLANK]` with a reason is the epistemically correct output when evidence is insufficient. The server treats it as a first-class response.
-- **Violations surface, they don't block.** The server reports what the model got wrong. It doesn't silently discard responses.
-- **Schema over instruction.** Validation is structural, not rhetorical. The model can't satisfy it with plausible-sounding language.
+- **The observer is structural, not rhetorical.** Asking a model to be honest is not the same as making it honest. HRP validates structure — evidence fields, source attribution, adversarial checks — so the gap has somewhere to show up.
+- **Blank is a first-class response.** A `[BLANK]` with a reason is the epistemically correct output when evidence is insufficient. Silence with explanation is more honest than a confident wrong answer.
+- **Forthcoming by design.** The observer surfaces what the model does not know, not just what it does. It does not wait for the human to probe.
+- **Violations surface, they don't block.** The server reports what the model got away with. The user sees the audit trail.
 - **Auditable.** Every tool call is logged. The reasoning path is inspectable.
 
 ---
@@ -261,7 +289,9 @@ Use hrp_check to validate the last response.
 - [x] Schema validation layer
 - [x] Confidence distribution reporting
 - [x] Session persistence (JSONL append, replay on construction, reset)
-- [ ] Domain-specific tag extensions (legal, medical, engineering)
+- [x] Domain registry — medical, legal, engineering, scientific, financial, historical, civic, general
+- [x] Domain-adaptive prompt builders (evidence standards, source expectations, adversarial framing)
+- [ ] Domain-aware structural validator (source pattern matching per domain in `validateHrpResponse`)
 - [ ] ACF integration — full framework as optional deep mode
 
 ---
@@ -276,8 +306,11 @@ MIT
 
 This is `v0.2.0-alpha`. The protocol is structurally sound; the implementation has honest gaps.
 
+**Domain-aware validation is prompt-level only.**
+`validateHrpResponse()` and `validatePlainText()` apply generic structural rules regardless of domain. Domain calibration currently lives in the prompt builders — the validator does not yet apply domain-specific source pattern matching (e.g. checking that a HIGH medical claim cites a DOI or guideline name). This is the next structural gap to close.
+
 **`hrp_check` plain-text scanning is heuristic.**
-When auditing a response that isn't structured JSON, `validatePlainText()` uses pattern matching — looking for confidence tag patterns, countercheck keywords, and source attribution markers. It will miss violations in creatively phrased responses and may flag false positives. The structured JSON path (`validateHrpResponse()`) is deterministic; the plain-text path is not.
+When auditing a response that isn't structured JSON, `validatePlainText()` uses pattern matching. It will miss violations in creatively phrased responses and may flag false positives. The structured JSON path (`validateHrpResponse()`) is deterministic; the plain-text path is not.
 
 **The model can still satisfy the schema rhetorically.**
 Schema validation catches structural violations — missing fields, wrong types, empty evidence arrays. It does not catch a model that populates all fields with plausible-sounding but fabricated content. The adversarial self-check is the human's last line of defense, not the server's.

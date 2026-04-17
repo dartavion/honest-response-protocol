@@ -3,7 +3,24 @@
     "allow": [
       "Bash(pnpm test:*)",
       "Bash(gh repo:*)",
-      "Bash(gh issue:*)"
+      "Bash(gh issue:*)",
+      "Bash(pnpm build:*)",
+      "Bash(npm info:*)",
+      "Bash(npm publish:*)",
+      "Bash(npm unpublish:*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/hrp-stop-hook.mjs\""
+          }
+        ]
+      }
     ]
   }
 }

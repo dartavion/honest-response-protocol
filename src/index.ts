@@ -9,6 +9,9 @@ import {
 import { z } from "zod";
 import { validateHrpResponse, validatePlainText } from "./validator.js";
 import { session } from "./session.js";
+import { runJudge } from "./judge.js";
+import { extractToHrpJson } from "./extractor.js";
+import { preferences } from "./preferences.js";
 
 // ─── Confidence Types ─────────────────────────────────────────────────────────
 
@@ -178,6 +181,14 @@ const HrpAdversarialInput = z.object({
 
 const HrpEvidenceInput = z.object({
   conclusion: z.string().describe("The conclusion requiring evidence before it can be stated"),
+});
+
+const HrpJudgeInput = z.object({
+  query: z.string().describe("The original query the response was answering"),
+  response_text: z.string().describe("The response to audit — prose or JSON"),
+  domain: z.string().optional().describe(
+    "Domain context — calibrates the judge's evidence standards and adversarial framing."
+  ),
 });
 
 // ─── Protocol Engine ──────────────────────────────────────────────────────────
@@ -405,6 +416,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: [],
       },
     },
+    {
+      name: "hrp_judge",
+      description:
+        "Separate-observer audit. Invokes a different model in a fresh context to judge a response against the protocol — no shared state with the generator. Returns the judge's HRP-shaped verdict and structural validation of that verdict. Requires an Anthropic API key in hrp.preferences.json or ANTHROPIC_API_KEY. The judge model defaults to claude-sonnet-4-6 and is configurable per user. Use this instead of hrp_check when you want structural (not rhetorical) separation between author and observer.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "The original query the response was answering" },
+          response_text: {
+            type: "string",
+            description: "The response to audit (prose or structured JSON — the judge handles both).",
+          },
+          domain: {
+            type: "string",
+            description:
+              "Domain context — calibrates judge's evidence standards and adversarial framing. Same domains as hrp_respond.",
+          },
+        },
+        required: ["query", "response_text"],
+      },
+    },
   ],
 }));
 
@@ -427,13 +459,43 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "hrp_check": {
         const input = HrpCheckInput.parse(args);
-        // Try structured JSON validation first, fall back to plain text scan
-        let validation;
-        try {
-          validation = validateHrpResponse(input.response_text);
-        } catch {
+
+        // Structured JSON path (deterministic).
+        let validation = validateHrpResponse(input.response_text);
+        let path: "structured" | "extracted" | "heuristic" = "structured";
+        let extractorInfo: { model: string; error: string | null; invoked: boolean } | null = null;
+
+        // If the text isn't JSON, don't fall back to the gameable regex scan.
+        // Hand the prose to the extractor subagent, which produces HRP JSON,
+        // then run the same structural validator on that.
+        const parseFailed =
+          validation.parse_error === "JSON parse failed" ||
+          validation.violations.some(
+            (v) => v.type === "SCHEMA_VIOLATION" && v.location === "root",
+          );
+
+        if (parseFailed && preferences().extractor.enabled) {
+          const extracted = await extractToHrpJson(input.response_text);
+          extractorInfo = {
+            model: extracted.model,
+            error: extracted.error,
+            invoked: extracted.invoked,
+          };
+          if (extracted.invoked && extracted.error === null && extracted.json) {
+            validation = validateHrpResponse(extracted.json);
+            path = "extracted";
+          } else {
+            // Extractor unavailable — fall back to heuristic plaintext scan,
+            // but flag clearly that results are advisory only.
+            validation = validatePlainText(input.response_text);
+            path = "heuristic";
+          }
+        } else if (parseFailed) {
+          // Extractor disabled and text isn't JSON — heuristic only.
           validation = validatePlainText(input.response_text);
+          path = "heuristic";
         }
+
         session.record("hrp_check", input.response_text.slice(0, 100), validation, false);
         const trend = session.violationTrend();
         return {
@@ -443,9 +505,52 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               ...validation,
               domain: resolveDomain(input.domain).label,
               session_trend: trend,
+              audit_path: path,
+              extractor: extractorInfo,
             }, null, 2),
           }],
           _meta: { protocol: "hrp", tool: "check", version: "0.1.0" },
+        };
+      }
+
+      case "hrp_judge": {
+        const input = HrpJudgeInput.parse(args);
+        const cfg = resolveDomain(input.domain);
+        const result = await runJudge({
+          query: input.query,
+          response_text: input.response_text,
+          domain_label: cfg.label,
+          evidence_standard: cfg.evidenceStandard,
+          source_expectation: cfg.sourceExpectation,
+          high_requires: cfg.highRequires,
+          adversarial_framing: cfg.adversarialFraming,
+        });
+        session.record(
+          "hrp_judge",
+          input.response_text.slice(0, 100),
+          result.validation,
+          result.validation.violations.some((v) => v.type === "SCHEMA_VIOLATION" && !result.invoked),
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  invoked: result.invoked,
+                  model: result.model,
+                  domain: cfg.label,
+                  verdict: result.verdict,
+                  validation: result.validation,
+                  raw: result.raw,
+                  error: result.error,
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+          _meta: { protocol: "hrp", tool: "judge", version: "0.2.0" },
         };
       }
 

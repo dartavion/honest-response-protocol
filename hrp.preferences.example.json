@@ -1,0 +1,21 @@
+{
+  "_comment": "Copy this file to hrp.preferences.json (gitignored) and edit. ANTHROPIC_API_KEY env var overrides apiKey; HRP_JUDGE_MODEL / HRP_EXTRACTOR_MODEL / HRP_SESSION_PATH env vars override the fields below.",
+
+  "judge": {
+    "enabled": true,
+    "model": "claude-sonnet-4-6",
+    "maxTokens": 2048
+  },
+
+  "extractor": {
+    "enabled": true,
+    "model": "claude-haiku-4-5-20251001",
+    "maxTokens": 2048
+  },
+
+  "apiKey": null,
+
+  "session": {
+    "persistPath": null
+  }
+}

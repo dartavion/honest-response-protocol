@@ -1,5 +1,6 @@
 import { readFileSync, appendFileSync, writeFileSync } from "fs";
 import type { ValidationResult, ViolationType } from "./validator.js";
+import { preferences } from "./preferences.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -196,5 +197,18 @@ export class SessionLogger {
 }
 
 // ─── Singleton session (one per server process) ───────────────────────────────
+//
+// Honors preferences().session.persistPath if set (local-only, gitignored).
+// If prefs are not loadable for any reason, fall back to in-memory only.
 
-export const session = new SessionLogger();
+function buildSingleton(): SessionLogger {
+  try {
+    const prefs = preferences();
+    const path = prefs.session.persistPath ?? undefined;
+    return new SessionLogger(undefined, path ?? undefined);
+  } catch {
+    return new SessionLogger();
+  }
+}
+
+export const session = buildSingleton();

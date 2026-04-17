@@ -41,7 +41,7 @@ Any unrecognized domain string falls back to `general` standards.
 
 ## How It Works
 
-The server exposes five tools. The model can call them voluntarily; schema validation catches non-conforming responses as a fallback.
+The server exposes six tools. Five can be called voluntarily by the model; `hrp_judge` runs a separate model in a separate context to audit a response — structural separation between author and observer. A Claude Code Stop hook provides runtime enforcement that does not require the model to cooperate.
 
 ### Tools
 
@@ -168,6 +168,22 @@ Returns `BLOCKED` with a structured prompt if the model cannot produce evidence.
 
 ---
 
+#### `hrp_judge`
+Separate-observer audit. Invokes a **different model in a fresh context** to judge a response against the protocol. The judge never sees the generator's chain of thought — only the final response — which is the structural separation the observer architecture has been describing. Use this when you want real separation between author and observer, not author-auditing-itself.
+
+Input:
+```json
+{
+  "query": "string",
+  "response_text": "string",
+  "domain": "string (optional)"
+}
+```
+
+Output includes the judge's verdict (HRP-shaped JSON), structural validation of that verdict, and the model that was used. Requires an Anthropic API key — configure via [local preferences](#local-preferences) or the `ANTHROPIC_API_KEY` env var.
+
+---
+
 #### `hrp_session`
 Returns session-level audit data across all turns. Use to inspect accumulated violations and session health, not just individual responses.
 
@@ -217,6 +233,40 @@ Model calls hrp_respond voluntarily
 ```
 
 The server does not block responses — it surfaces violations with structured feedback. The user sees what the model got away with.
+
+---
+
+## Local Preferences
+
+Per-user configuration is read from `hrp.preferences.json` in the project root. This file is **gitignored** — it holds your API key and model choices and is not shared across the team. Copy `hrp.preferences.example.json` to start.
+
+```json
+{
+  "judge": { "enabled": true, "model": "claude-sonnet-4-6", "maxTokens": 2048 },
+  "extractor": { "enabled": true, "model": "claude-haiku-4-5-20251001", "maxTokens": 2048 },
+  "apiKey": null,
+  "session": { "persistPath": null }
+}
+```
+
+Resolution order (later wins):
+
+1. Built-in defaults
+2. `~/.config/hrp/preferences.json` (user global)
+3. `./hrp.preferences.json` (project local, gitignored)
+4. Env: `ANTHROPIC_API_KEY`, `HRP_JUDGE_MODEL`, `HRP_EXTRACTOR_MODEL`, `HRP_SESSION_PATH`, `HRP_JUDGE_ENABLED`, `HRP_EXTRACTOR_ENABLED`
+
+If no API key is configured, `hrp_judge` and the extractor fallback in `hrp_check` return `invoked: false` with a descriptive message instead of failing. The rest of the protocol still works.
+
+---
+
+## Stop Hook — Runtime Enforcement in Claude Code
+
+`hrp_check`, `hrp_respond`, and `hrp_adversarial` are voluntary — the model chooses whether to call them. That's the weakest link in the original design. To close it, this repo ships a Claude Code Stop hook at `.claude/hooks/hrp-stop-hook.mjs` that runs on every assistant turn and pipes the final response through `validateHrpResponse`. The hook is **advisory, not blocking** — it surfaces violations via `additionalContext` and never interrupts the turn — which matches the project's "violations surface, they don't block" principle, but it does so structurally: the model has no way to opt out.
+
+The hook runs offline (no API calls) — it uses the structural JSON validator only. For deeper audit on prose responses, call `hrp_judge` explicitly.
+
+To disable, remove the `hooks.Stop` entry from `.claude/settings.json`.
 
 ---
 
@@ -291,8 +341,13 @@ Use hrp_check to validate the last response.
 - [x] Session persistence (JSONL append, replay on construction, reset)
 - [x] Domain registry — medical, legal, engineering, scientific, financial, historical, civic, general
 - [x] Domain-adaptive prompt builders (evidence standards, source expectations, adversarial framing)
+- [x] `hrp_judge` — separate-observer tool (different model, fresh context)
+- [x] Extractor-backed `hrp_check` fallback (replaces gameable plaintext regex)
+- [x] Claude Code Stop hook — runtime enforcement without model cooperation
+- [x] Per-user preferences (`hrp.preferences.json`, gitignored)
 - [ ] Domain-aware structural validator (source pattern matching per domain in `validateHrpResponse`)
-- [ ] ACF integration — full framework as optional deep mode
+- [ ] WIPf signing + hash-chained ledger entries
+- [ ] Confidence ontology rework: split provenance / confidence / answerability
 
 ---
 

@@ -15,6 +15,10 @@ yarn-error.log*
 .env.*
 !.env.example
 
+# Local preferences — per-user, never committed
+hrp.preferences.json
+!hrp.preferences.example.json
+
 # OS
 .DS_Store
 
@@ -30,3 +34,11 @@ yarn-error.log*
 temp/
 
 node_modules/
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/worktrees/
+
+# pnpm install tmp leftovers
+_tmp_*.idea/
+.idea/
